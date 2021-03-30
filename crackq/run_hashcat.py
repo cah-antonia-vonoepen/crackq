@@ -32,6 +32,8 @@ redis_q = Queue('default', connection=redis_con, serializer=JSONSerializer)
 speed_q = Queue('speed_check', connection=redis_con,
                 serializer=JSONSerializer)
 
+SOFT_THRESHOLD = 85
+RESUME_THRESHOLD = 75
 
 def del_check(job):
     """
@@ -50,17 +52,14 @@ def del_check(job):
 def write_template(template_dict, job_id):
     """
     Write a CrackQ json state file
-
     This could be a job template or a current
     job state file.
-
     Arguments
     ---------
     template_dict: dict
         JSON job details in dict format
     job_id: uuid
         ID to store the file under
-
     Returns
     """
     logger.debug('Writing template/status file')
@@ -76,7 +75,6 @@ def write_template(template_dict, job_id):
 def send_email(mail_server, port, src, dest, sub, tls):
     """
     Simple email notification
-
     Arguments
     --------
     mail_server: str
@@ -89,7 +87,6 @@ def send_email(mail_server, port, src, dest, sub, tls):
         email to address
     tls: boolean
         use encryption for SMTP
-
     Returns
     -------
     """
@@ -187,6 +184,7 @@ def runner(hash_file=None, hash_mode=1000,
     if brain:
         speed_session = '{}_speed'.format(session)
         job = redis_q.fetch_job(session)
+        '''
         if 'brain_check' in job.meta:
             logger.debug('Restored job already has brain check state')
             speed_job = None
@@ -199,7 +197,8 @@ def runner(hash_file=None, hash_mode=1000,
             else:
                 speed_job = speed_q.fetch_job(speed_session)
         else:
-            speed_job = speed_q.fetch_job(speed_session)
+        '''
+        speed_job = speed_q.fetch_job(speed_session)
         wait_count = 0
         if speed_job:
             while len(speed_job.meta) < 1 and wait_count < 410:
@@ -423,6 +422,33 @@ def init_callback(sender):
     logger.debug('Hashcat status: {}'.format(status_dict))
     write_result(sender)
 
+def hold_callback(sender):
+    """
+    Callback function to pause until Temperatures fall below soft threshold.
+    Action is to pause and then resume job
+    """
+    logger.debug('Callback Triggered: Hold')
+    logger.info('Callback Triggered: Hold')
+    #pause job
+    sender.hashcat_session_pause()
+    temp_breach = True
+    wait_counter = 0
+    while temp_breach and wait_counter <= 180:
+        time.sleep(25) #sleep for 25 seconds
+        wait_counter += 25
+        #check if temp lower
+        status_dict = status(sender)
+        hc_temp = status_dict.get("Device Temperatures") #returns temp_dict [{'dev_id': temp, 'dev_id': temp}]
+        logger.debug('Hashcat status: {}'.format(status_dict))
+        temp_check = False
+        for item in hc_temp:
+            if int(list(item.values())[0]) >= RESUME_THRESHOLD:
+                temp_check = True
+                break
+        if not temp_check: #none of the temps are above threshold
+            temp_breach = False
+            sender.hashcat_session_resume()
+
 
 def warning_callback(sender):
     """
@@ -488,7 +514,6 @@ def circulator(circList, entry, limit):
     """
     This method will wrap a list overwriting at the
     beginning when limit is reached.
-
     Args
     ----
     circList: list
@@ -497,7 +522,6 @@ def circulator(circList, entry, limit):
         item to add to list
     limit: int
         size limit for circular list
-
     Returns
     -------
     circList: list
@@ -512,11 +536,9 @@ def circulator(circList, entry, limit):
 def write_result(sender):
     """
     Method to write cracking results to file in json format
-
     When executed, this will open the corresponding session.crack file and
     load the data into a results file with other meta data relating to the
     job
-
     Arguments
     ---------
     hcat_status: dict
@@ -526,7 +548,6 @@ def write_result(sender):
         redis connection object initiated
     Returns
     -------
-
     """
     logger.debug('Updating status file')
     hcat_status = status(sender)
@@ -572,7 +593,6 @@ def write_result(sender):
 def brain_check(speed, salts):
     """
     Method to decide whether or not to enable the brain
-
     Arguments
     ---------
     speed: int
@@ -613,7 +633,6 @@ def hc_worker(crack=None, hash_file=None, session=None,
               benchmark=False, benchmark_all=False, wordlist2=None):
     """
     Method to load a rq worker to take jobs from redis queue for execution
-
     ###***finish this
     Arguments
     ---------
@@ -658,6 +677,17 @@ def hc_worker(crack=None, hash_file=None, session=None,
         main_counter = 0
         while True:
             hc_state = hcat.status_get_status_string()
+            hc_status = hcat.hashcat_status_get_status()
+            hc_temp = hc_status.get("Device Temperatures") #returns temp_dict [{'dev_id': temp, 'dev_id': temp}]
+            logger.info(f"Hashcat temps: {hc_temp}")
+            logger.debug(f"Hashcat temps: {hc_temp}")
+            temp_breach = False
+            for item in hc_temp:
+                if int(list(item.values())[0]) >= SOFT_THRESHOLD:
+                    temp_breach = True
+                    break
+            if temp_breach:
+                hold_callback(hcat)
             logger.debug('MAIN loop')
             if hc_state == 'Exhausted' and not mask_file:
                 finished_callback(hcat)
@@ -769,7 +799,6 @@ def show_speed(crack=None, hash_file=None, session=None,
     gather information relevant to brain use, and also for quick wins
     to skip the queue. It will pause the current job then run in the
     above modes to get passwords from the potfile and an estimated speed.
-
     Arguments
     ---------
     crack: object
@@ -778,7 +807,6 @@ def show_speed(crack=None, hash_file=None, session=None,
         File containing hashes to feed to hashcat
     session: Hashcat session
     wordlist: Wordlist to feed Hashcat
-
     Returns
     -------
     """
