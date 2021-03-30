@@ -52,7 +52,7 @@ os.umask(0o077)
 # Setup Flask App
 login_manager = LoginManager()
 app = Flask(__name__)
-csrf = SeaSurf()
+#csrf = SeaSurf()
 bcrypt = Bcrypt(app)
 CRACK_CONF = hc_conf()
 
@@ -490,7 +490,7 @@ class Sso(MethodView):
         else:
             return jsonify(ERR_METH_NOT), 405
 
-    @csrf.exempt
+    #@csrf.exempt
     def post(self):
         """
         Handle returned SAML reponse
