@@ -6,7 +6,7 @@ Author: Daniel Turner
 
 ------------
 
-Test
+
 Python 3 REST API & JS GUI for managing hashcat crack jobs in a queuing system.
 
 
